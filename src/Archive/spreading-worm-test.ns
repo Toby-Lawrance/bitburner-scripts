@@ -1,0 +1,79 @@
+let allKnownServers = [];
+
+/** @param {NS} ns **/
+export async function main(ns) {
+    let maxPortBreaks = 2;
+    let scriptName = "spreading-worm-test.ns";
+
+    let currentHost = ns.getHostname();
+
+    console.log("Running from: ", currentHost);
+
+    let connectable = ns.scan();
+    let wormCost = ns.getScriptRam(scriptName);
+
+    let serverInfo = connectable.map(hostname => {
+        let info = {
+            "host": hostname,
+            "ram": (ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname)),
+            "ports": ns.getServerNumPortsRequired(hostname),
+            "root": ns.hasRootAccess(hostname)
+        };
+        console.log(info);
+        return info;
+    });
+
+    let toConnectable = serverInfo.filter(server => server.ram >= wormCost &&
+        (server.ports <= maxPortBreaks || server.root) &&
+        !(ns.scriptRunning(scriptName, server.host)));
+
+    ns.print("Will attempt to connect to: " + JSON.stringify(toConnectable))
+
+    if (toConnectable.length == 0) {
+        console.log("Could not find any suitable from: ", currentHost);
+    }
+
+    for (const toConnect of toConnectable) {
+        if (toConnect === undefined) {
+            continue;
+        }
+
+        if (!(toConnect.root)) {
+            if (toConnect.ports > 0) {
+                if (ns.fileExists("BruteSSH.exe", "home")) {
+                    console.log("Bruting: ", toConnect.host);
+                    await ns.brutessh(toConnect.host);
+                }
+
+                if (ns.fileExists("FTPCrack.exe", "home")) {
+                    console.log("FTP'ing: ", toConnect.host);
+                    await ns.ftpcrack(toConnect.host);
+                }
+            }
+
+
+            console.log("Attempting to nuke: ", toConnect.host);
+            await ns.nuke(toConnect.host);
+        }
+
+
+
+        await ns.scp(scriptName, toConnect.host);
+
+        let numThreads = Math.max(1, Math.floor(wormCost / toConnect.ram));
+
+        ns.print("Num threads: " + numThreads);
+
+        let pid = await ns.exec(scriptName, toConnect.host, numThreads);
+
+        ns.print("PID: " + pid);
+
+        if (pid == 0) {
+            console.log("Unable to start script on: " + toConnect.host);
+        }
+    }
+
+    while (true) {
+        await ns.sleep(10000);
+    }
+}
